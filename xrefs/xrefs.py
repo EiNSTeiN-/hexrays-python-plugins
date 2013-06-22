@@ -53,7 +53,7 @@ class XrefsForm(idaapi.PluginForm):
         return
     
     def Show(self):
-        idaapi.PluginForm.Show(self, 'bla')
+        idaapi.PluginForm.Show(self, self.__name)
         return
     
     def populate_form(self):
@@ -73,11 +73,20 @@ class XrefsForm(idaapi.PluginForm):
         self.table.setColumnWidth(1, 150)
         self.table.setColumnWidth(2, 450)
         
+        self.table.cellDoubleClicked.connect(self.double_clicked)
+        
         #~ self.table.setSelectionMode(QtGui.QAbstractItemView.NoSelection)
         self.table.setSelectionBehavior(QtGui.QAbstractItemView.SelectRows )
         self.parent.setLayout(layout)
         
         self.populate_table()
+        
+        return
+    
+    def double_clicked(self, row, column):
+        
+        ea = self.functions[row]
+        hexrays.open_pseudocode(ea, True)
         
         return
     
@@ -103,6 +112,7 @@ class XrefsForm(idaapi.PluginForm):
         
         frm = [x.frm for x in idautils.XrefsTo(self.__ea)]
         
+        self.functions = []
         items = []
         for ea in frm:
             try:
@@ -111,6 +121,7 @@ class XrefsForm(idaapi.PluginForm):
                 cfunc.refcnt += 1
                 #~ print repr(cfunc)
                 
+                self.functions.append(cfunc.entry_ea)
                 items.append((ea, idc.GetFunctionName(cfunc.entry_ea), self.get_decompiled_line(cfunc, ea)))
                 
             except Exception as e:
@@ -163,7 +174,7 @@ class hexrays_callback_info(object):
             sel = item.it.to_specific_type
             #~ print 'ctree item xrefs'
             if sel.opname == 'obj':
-                print 'xref of', repr(sel.obj_ea)
+                print 'xref of obj', hex(sel.obj_ea)
             else:
                 print 'cannot xref this item, please xref global functions or variables.'
                 sel = None
@@ -181,7 +192,7 @@ class hexrays_callback_info(object):
             sel = None
         
         if sel:
-            print 'selection', repr(sel)
+            #~ print 'selection', repr(sel)
             form = XrefsForm(sel)
             form.Show()
         
@@ -191,7 +202,7 @@ class hexrays_callback_info(object):
         
         try:
             if event == hexrays.hxe_keyboard:
-                print 'keyboard'
+                #~ print 'keyboard'
                 vu, keycode, shift = args
                 
                 if idaapi.lookup_key_code(keycode, shift, True) == idaapi.get_key_code("X") and shift == 0:
@@ -200,7 +211,7 @@ class hexrays_callback_info(object):
                     return 1
                 
             elif event == hexrays.hxe_right_click:
-                print 'right click'
+                #~ print 'right click'
                 self.vu = args[0]
                 hexrays.add_custom_viewer_popup_item(self.vu.ct, "Xrefs", "X", self.menu_callback)
             
