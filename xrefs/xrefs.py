@@ -1,3 +1,8 @@
+# Xref plugin for Hexrays Decompiler
+#
+# Author: EiNSTeiN_ <einstein@g3nius.org>
+
+
 import idautils
 import idaapi
 import idc
