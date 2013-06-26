@@ -1,6 +1,19 @@
-# Python printer for Hexrays Decompiler
-#
-# Author: EiNSTeiN_ <einstein@g3nius.org>
+""" Python printer for Hexrays Decompiler
+
+Author: EiNSTeiN_ <einstein@g3nius.org>
+
+
+Prints out the AST with a Python syntax instead of the normal C syntax.
+
+* Pre/post increments or decrements are translated into "i += 1".
+* For loops are translated in an equivalent while loop.
+* Some names are translated, like strlen or printf, more should be added.
+* Structures are printed out as classes.
+
+Usage:
+>>> pyprint(here()) # print current function
+>>> pyprint(0x402010) # print function at specified address
+"""
 
 import idautils
 
@@ -12,15 +25,53 @@ translate_name = {
 
 class printer(object):
     
-    def __init__(self, cfunc):
+    def __init__(self, cfunc, print_structures=True):
         
         self.cfunc = cfunc
+        
+        #~ self.structs = dict([(s[2], dict([(m[0], m[1]) for m in idautils.StructMembers(s[1])])) for s in idautils.Structs()])
+        
+        self.used_structs = []
         
         return
     
     def __str__(self):
         
-        s = self.do(self.cfunc)
+        fct = s = '# Function: 0x%x\n' % (self.cfunc.entry_ea, )
+        fct += self.do(self.cfunc)
+        
+        members = self.do_structs()
+        
+        return '%s\n\n%s' % (members, fct)
+    
+    def do_struct(self, name):
+        s = ''
+        
+        sid = idc.GetStrucIdByName(name)
+        
+        s += 'class %s():\n' % (name, )
+        s += '  def __init__(self):\n'
+        for offset, name, size in idautils.StructMembers(sid):
+            
+            flags = idc.GetMemberFlag(sid, offset)
+            if flags & idaapi.FF_STRU == idaapi.FF_STRU:
+                msid = idc.GetMemberStrId(sid, offset)
+                value = idc.GetStrucName(msid)
+                if value not in self.used_structs:
+                    self.used_structs.append(value)
+            else:
+                value = '0'
+            s += '    self.%s = %s\n' % (name, value)
+        s += '    return'
+        
+        return s
+    
+    def do_structs(self):
+        
+        s = ''
+        
+        for name in self.used_structs:
+            s += self.do_struct(name)
         
         return s
     
@@ -29,10 +80,24 @@ class printer(object):
         _indent = lambda s: '  ' + '\n  '.join(s.split('\n'))
         
         if type(obj) in (hexrays.cfuncptr_t, hexrays.cfunc_t):
-            s = self.do(obj.body)
+            body = self.do(obj.body)[1:]
             
-            s = 'def %s(%s)%s' % (self.make_name(self.cfunc.entry_ea), \
-                    ', '.join([str(a.name) for a in self.cfunc.arguments]), s)
+            prototype = 'def %s(%s):' % (self.make_name(self.cfunc.entry_ea), \
+                    ', '.join([str(a.name) for a in self.cfunc.arguments]))
+            
+            vars = '\n'
+            for lvar in obj.lvars:
+                if lvar.is_arg_var:
+                    continue
+                if not lvar.used:
+                    continue
+                if lvar._type.is_struct:
+                    #~ value = '%s()' % str(lvar._type)
+                    vars += '  %s = %s()\n' % (lvar.name, str(lvar._type))
+                else:
+                    vars += '  # %s %s\n' % (str(lvar._type), lvar.name, )
+            
+            s = prototype + vars + body
         elif type(obj) == hexrays.cinsn_t:
             
             if obj.op == hexrays.cit_continue:
@@ -174,8 +239,7 @@ class printer(object):
             #~ hexrays.cot_obj:      '{obj_ea}',
             
             if obj.op in format:
-                #~ print format[obj.op]
-                #~ print repr(obj.operands)
+                
                 operands = obj.operands
                 for name in operands:
                     
@@ -193,11 +257,28 @@ class printer(object):
                 
             elif obj.op in (hexrays.cot_memptr, hexrays.cot_memref):
                 
-                #~ hexrays.cot_memref:   ,
-                #~ hexrays.cot_memptr:   '{x}->{m}',
+                x = obj.operands['x']
+                m = obj.operands['m']
                 
-                f = '{x}.{m}'
-                s = f.format(**obj.operands)
+                xtype = typestring(x.type.u_str())
+                xtype.remove_ptr_or_array()
+                typename = str(xtype)
+                
+                sid = idc.GetStrucIdByName(str(xtype))
+                if not sid:
+                    print 'error getting structure %s' % (repr(typename), )
+                    member = 'field_%x' % (m, )
+                else:
+                    member = idc.GetMemberName(sid, m)
+                    if not member:
+                        member = 'field_%x' % (m, )
+                    else:
+                        if typename not in self.used_structs:
+                            self.used_structs.append(typename)
+                
+                name = self.do(x)
+                
+                s = '{x}.{m}'.format(x=name, m=member)
                 
             elif obj.op == hexrays.cot_empty:
                 s = ''
@@ -207,6 +288,10 @@ class printer(object):
         elif type(obj) == hexrays.var_ref_t:
             
             s = self.cfunc.lvars[obj.idx].name
+        
+        elif type(obj) == hexrays.typestring:
+            
+            s = str(obj)
         
         elif type(obj) == hexrays.carglist_t:
             
@@ -243,13 +328,12 @@ class printer(object):
         return name
 
 def pyprint(ea):
-    s = '# Function: 0x%x\n' % (ea, )
-
+    
     c = decompile(ea)
     c.refcnt += 1
 
     p = printer(c)
-    s += str(p)
+    s = str(p)
     
     return s
 
