@@ -274,7 +274,7 @@ class hexrays_callback_info(object):
         item = vu.item
         
         sel = None
-        if item.citype == hexrays.VDI_EXPR and sel.opname in ('obj', 'memref', 'memptr'):
+        if item.citype == hexrays.VDI_EXPR and item.it.to_specific_type.opname in ('obj', 'memref', 'memptr'):
             # if an expression is selected. verify that it's either a cot_obj, cot_memref or cot_memptr
             sel = item.it.to_specific_type
             
