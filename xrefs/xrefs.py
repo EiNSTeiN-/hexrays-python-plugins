@@ -1,7 +1,9 @@
-# Xref plugin for Hexrays Decompiler
-#
-# Author: EiNSTeiN_ <einstein@g3nius.org>
+""" Xref plugin for Hexrays Decompiler
 
+Author: EiNSTeiN_ <einstein@g3nius.org>
+
+
+"""
 
 import idautils
 import idaapi
@@ -22,6 +24,9 @@ except:
     except:
         print 'PySide not available'
 
+XREF_EA = 0
+XREF_STRUC_MEMBER = 1
+
 class XrefsForm(idaapi.PluginForm):
     
     def __init__(self, target):
@@ -32,18 +37,40 @@ class XrefsForm(idaapi.PluginForm):
         
         if type(self.target) == hexrays.cfunc_t:
             
+            self.__type = XREF_EA
             self.__ea = self.target.entry_ea
             self.__name = 'Xrefs of %x' % (self.__ea, )
             
         elif type(self.target) == hexrays.cexpr_t and self.target.opname == 'obj':
             
+            self.__type = XREF_EA
             self.__ea = self.target.obj_ea
             self.__name = 'Xrefs of %x' % (self.__ea, )
+        
+        elif type(self.target) == hexrays.cexpr_t and self.target.opname in ('memptr', 'memref'):
             
+            self.__type = XREF_STRUC_MEMBER
+            name = self.get_struc_name()
+            self.__name = 'Xrefs of %s' % (name, )
+        
         else:
             raise ValueError('cannot show xrefs for this kind of target')
         
         return
+    
+    def get_struc_name(self):
+        
+        x = self.target.operands['x']
+        m = self.target.operands['m']
+        
+        xtype = typestring(x.type.u_str())
+        xtype.remove_ptr_or_array()
+        typename = str(xtype)
+        
+        sid = idc.GetStrucIdByName(typename)
+        member = idc.GetMemberName(sid, m)
+        
+        return '%s::%s' % (typename, member)
     
     def OnCreate(self, form):
         
@@ -97,6 +124,7 @@ class XrefsForm(idaapi.PluginForm):
     
     def get_decompiled_line(self, cfunc, ea):
         
+        print repr(ea)
         if ea not in cfunc.eamap:
             print 'strange, %x is not in %x eamap' % (ea, cfunc.entry_ea)
             return
@@ -105,19 +133,22 @@ class XrefsForm(idaapi.PluginForm):
         
         lines = []
         for stmt in insnvec:
-            d = stmt.details
             
-            s = stmt.details.print1(cfunc.__deref__())
-            s = idaapi.tag_remove(s)
+            qs = qstring()
+            qp = qstring_printer_t(cfunc.__deref__(), qs, False)
+            
+            stmt._print(0, qp)
+            s = str(qs).split('\n')[0]
+                
+            #~ s = idaapi.tag_remove(s)
             lines.append(s)
         
         return '\n'.join(lines)
     
-    def populate_table(self):
+    def get_items_for_ea(self, ea):
         
         frm = [x.frm for x in idautils.XrefsTo(self.__ea)]
         
-        self.functions = []
         items = []
         for ea in frm:
             try:
@@ -127,15 +158,89 @@ class XrefsForm(idaapi.PluginForm):
                 #~ print repr(cfunc)
                 
                 self.functions.append(cfunc.entry_ea)
-                items.append((ea, idc.GetFunctionName(cfunc.entry_ea), self.get_decompiled_line(cfunc, ea)))
+                self.items.append((ea, idc.GetFunctionName(cfunc.entry_ea), self.get_decompiled_line(cfunc, ea)))
                 
             except Exception as e:
                 print 'could not decompile: %s' % (str(e), )
-
-        self.table.setRowCount(len(items))
+        
+        return
+    
+    def get_items_for_type(self):
+        
+        x = self.target.operands['x']
+        m = self.target.operands['m']
+        
+        xtype = typestring(x.type.u_str())
+        xtype.remove_ptr_or_array()
+        typename = str(xtype)
+        
+        addresses = []
+        for ea in idautils.Functions():
+            
+            try:
+                cfunc = hexrays.decompile(ea)
+                cfunc.refcnt += 1
+            except:
+                print 'Decompilation of %x failed' % (ea, )
+                continue
+            
+            str(cfunc)
+            
+            for citem in cfunc.treeitems:
+                citem = citem.to_specific_type
+                if not (type(citem) == hexrays.cexpr_t and citem.opname in ('memptr', 'memref')):
+                    continue
+                
+                _x = citem.operands['x']
+                _m = citem.operands['m']
+                _xtype = typestring(_x.type.u_str())
+                _xtype.remove_ptr_or_array()
+                _typename = str(_xtype)
+                
+                print 'in', hex(cfunc.entry_ea), _typename, _m
+                
+                if not (_typename == typename and _m == m):
+                    continue
+                
+                parent = citem
+                while parent:
+                    if type(parent.to_specific_type) == hexrays.cinsn_t:
+                        break
+                    parent = cfunc.body.find_parent_of(parent)
+                
+                if not parent:
+                    print 'cannot find parent statement (?!)'
+                    continue
+                
+                if parent.ea == idaapi.BADADDR:
+                    print 'parent.ea is BADADDR'
+                    continue
+                
+                if parent.ea in addresses:
+                    continue
+                
+                addresses.append(parent.ea)
+                
+                self.functions.append(cfunc.entry_ea)
+                self.items.append((parent.ea, idc.GetFunctionName(cfunc.entry_ea), self.get_decompiled_line(cfunc, int(parent.ea))))
+            
+        
+        return []
+    
+    def populate_table(self):
+        
+        self.functions = []
+        self.items = []
+        
+        if self.__type == XREF_EA:
+            self.get_items_for_ea(self.__ea)
+        else:
+            self.get_items_for_type()
+        
+        self.table.setRowCount(len(self.items))
         
         i = 0
-        for item in items:
+        for item in self.items:
             address, func, line = item
             item = QtGui.QTableWidgetItem('0x%x' % (address, ))
             item.setFlags(item.flags() ^ QtCore.Qt.ItemIsEditable)
@@ -180,8 +285,13 @@ class hexrays_callback_info(object):
             #~ print 'ctree item xrefs'
             if sel.opname == 'obj':
                 print 'xref of obj', hex(sel.obj_ea)
+            elif sel.opname in ('memref', 'memptr'):
+                print sel.opname, repr(sel.operands)
+                x = sel.operands['x']
+                m = sel.operands['m']
+                print 'xref of member #%u of %s' % (m, x.type)
             else:
-                print 'cannot xref this item, please xref global functions or variables.'
+                print 'cannot xref this item (%s), please xref global functions or variables.' % (sel.opname, )
                 sel = None
         elif item.citype == hexrays.VDI_LVAR:
             # local variables are not xref-able
