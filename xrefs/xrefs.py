@@ -2,6 +2,10 @@
 
 Author: EiNSTeiN_ <einstein@g3nius.org>
 
+Show decompiler-style Xref when the X key is pressed in the Decompiler window.
+
+- It supports any global name: functions, strings, integers, etc.
+- It supports structure member.
 
 """
 
@@ -124,7 +128,6 @@ class XrefsForm(idaapi.PluginForm):
     
     def get_decompiled_line(self, cfunc, ea):
         
-        print repr(ea)
         if ea not in cfunc.eamap:
             print 'strange, %x is not in %x eamap' % (ea, cfunc.entry_ea)
             return
@@ -152,10 +155,8 @@ class XrefsForm(idaapi.PluginForm):
         items = []
         for ea in frm:
             try:
-                #~ print 'decompiling', hex(ea)
                 cfunc = hexrays.decompile(ea)
                 cfunc.refcnt += 1
-                #~ print repr(cfunc)
                 
                 self.functions.append(cfunc.entry_ea)
                 self.items.append((ea, idc.GetFunctionName(cfunc.entry_ea), self.get_decompiled_line(cfunc, ea)))
@@ -197,7 +198,7 @@ class XrefsForm(idaapi.PluginForm):
                 _xtype.remove_ptr_or_array()
                 _typename = str(_xtype)
                 
-                print 'in', hex(cfunc.entry_ea), _typename, _m
+                #~ print 'in', hex(cfunc.entry_ea), _typename, _m
                 
                 if not (_typename == typename and _m == m):
                     continue
@@ -212,11 +213,11 @@ class XrefsForm(idaapi.PluginForm):
                     print 'cannot find parent statement (?!)'
                     continue
                 
-                if parent.ea == idaapi.BADADDR:
-                    print 'parent.ea is BADADDR'
+                if parent.ea in addresses:
                     continue
                 
-                if parent.ea in addresses:
+                if parent.ea == idaapi.BADADDR:
+                    print 'parent.ea is BADADDR'
                     continue
                 
                 addresses.append(parent.ea)
@@ -267,76 +268,48 @@ class hexrays_callback_info(object):
         self.vu = None
         return
     
-    def menu_callback(self):
-        #~ print 'xrefs menu clicked'
-        self.show_xrefs(self.vu)
-        return 0
-    
     def show_xrefs(self, vu):
-        #~ print 'showing xrefs'
         
         vu.get_current_item(hexrays.USE_KEYBOARD)
         item = vu.item
-        #~ print 'current item is', repr(item)
         
-        if item.citype == hexrays.VDI_EXPR:
-            # an expression is selected. verify that it's either a cot_obj, cot_memref or cot_memptr
+        sel = None
+        if item.citype == hexrays.VDI_EXPR and sel.opname in ('obj', 'memref', 'memptr'):
+            # if an expression is selected. verify that it's either a cot_obj, cot_memref or cot_memptr
             sel = item.it.to_specific_type
-            #~ print 'ctree item xrefs'
-            if sel.opname == 'obj':
-                print 'xref of obj', hex(sel.obj_ea)
-            elif sel.opname in ('memref', 'memptr'):
-                print sel.opname, repr(sel.operands)
-                x = sel.operands['x']
-                m = sel.operands['m']
-                print 'xref of member #%u of %s' % (m, x.type)
-            else:
-                print 'cannot xref this item (%s), please xref global functions or variables.' % (sel.opname, )
-                sel = None
-        elif item.citype == hexrays.VDI_LVAR:
-            # local variables are not xref-able
-            #~ print 'lvar item'
-            #~ sel = item.l
-            pass
-            sel = None
+            
         elif item.citype == hexrays.VDI_FUNC:
             # if the function itself is selected, show xrefs to it.
-            print 'function xrefs'
             sel = item.f
         else:
-            sel = None
+            return False
         
-        if sel:
-            #~ print 'selection', repr(sel)
-            form = XrefsForm(sel)
-            form.Show()
-        
-        return
+        form = XrefsForm(sel)
+        form.Show()
+        return True
+    
+    def menu_callback(self):
+        self.show_xrefs(self.vu)
+        return 0
     
     def event_callback(self, event, *args):
         
         try:
             if event == hexrays.hxe_keyboard:
-                #~ print 'keyboard'
                 vu, keycode, shift = args
                 
                 if idaapi.lookup_key_code(keycode, shift, True) == idaapi.get_key_code("X") and shift == 0:
-                    self.show_xrefs(vu)
-                    
-                    return 1
+                    if self.show_xrefs(vu):
+                        return 1
                 
             elif event == hexrays.hxe_right_click:
-                #~ print 'right click'
                 self.vu = args[0]
                 hexrays.add_custom_viewer_popup_item(self.vu.ct, "Xrefs", "X", self.menu_callback)
             
         except:
             traceback.print_exc()
-            
         
         return 0
 
 i = hexrays_callback_info()
 hexrays.install_callback(i.event_callback)
-
-
